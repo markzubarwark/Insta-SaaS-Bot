@@ -1,9 +1,51 @@
-...
-<tr><th>Email</th><th>Status</th><th>Action</th></tr>
-{% for u in users %}
-<tr>
-    <td>{{ u.email }}</td> ...
-    <a href="/admin/action/premium/{{u.email}}"... ```
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Panel</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { background: #111; color: white; font-family: sans-serif; padding: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #333; padding: 10px; text-align: left; }
+        th { background: #E1306C; }
+        .btn { padding: 5px 10px; font-size: 12px; text-decoration: none; color: white; border-radius: 4px; margin-right: 5px; display: inline-block; margin-bottom: 5px;}
+        .premium { color: #fbbf24; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2>👑 Admin Panel</h2>
+        <a href="/logout" style="color:red; text-decoration:none; font-weight:bold;">Logout</a>
+    </div>
 
-यह सिस्टम **हमेशा के लिए फ्री** है और किसी भी OTP सर्विस पर निर्भर नहीं है!
+    <table>
+        <tr>
+            <th>User</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+        {% for u in users %}
+        {% if u.username != 'admin' %} <tr>
+            <td>{{ u.username }}</td>
+            <td>
+                {% if u.is_premium %}
+                    <span class="premium">PRO</span>
+                {% else %}
+                    FREE
+                {% endif %}
+                {% if u.banned %} <br><span style="color:red">(BANNED)</span> {% endif %}
+            </td>
+            <td>
+                {% if not u.is_premium %}
+                    <a href="/admin/action/premium/{{u.username}}" class="btn" style="background:green">Give Pro</a>
+                {% endif %}
+                <a href="/admin/action/ban/{{u.username}}" class="btn" style="background:red">Ban/Unban</a>
+            </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+    </table>
+</body>
+</html>
+
       
