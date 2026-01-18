@@ -1,0 +1,6 @@
+Flask
+instagrapi
+schedule
+moviepy
+gunicorn
+requests
