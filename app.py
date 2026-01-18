@@ -4,14 +4,37 @@ import datetime
 import threading
 import schedule
 import time
+import requests
+import json
 from flask import Flask, request, render_template, redirect, url_for, session
 from instagrapi import Client
 from moviepy.editor import VideoFileClip
-from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = "my_super_secret_saas_key"
+
+# --- JSONBIN CONFIG (Apki Details Set Kar Di Hain) ---
+JSONBIN_API_KEY = "$2a$10$b1151NglEWv02j576NgfWO2gUwDgYcHXkcz1YhqpnQtTS0/j5k6V."
+JSONBIN_BIN_ID = "696cedc5ae596e708fe4b56a"
+
+# --- DATABASE HELPERS ---
+def read_db():
+    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}/latest"
+    headers = {"X-Master-Key": JSONBIN_API_KEY}
+    try:
+        req = requests.get(url, headers=headers)
+        return req.json().get("record", {})
+    except:
+        return {}
+
+def save_db(data):
+    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
+    headers = {
+        "Content-Type": "application/json",
+        "X-Master-Key": JSONBIN_API_KEY
+    }
+    requests.put(url, json=data, headers=headers)
 
 # --- ADMIN LOGIN ---
 ADMIN_USER = "admin"
@@ -20,33 +43,29 @@ ADMIN_PASS = "boss"
 UPLOAD_FOLDER = '/tmp'
 if not os.path.exists(UPLOAD_FOLDER): os.makedirs(UPLOAD_FOLDER)
 
-# --- MONGODB CONNECTION (User Link) ---
-# 👇👇👇 IMP: Niche "PASSWORD_YAHA_LIKHE" ko hatakar apna asli password daalein
-MONGO_URI = "mongodb+srv://markzubarwark_db_user:PASSWORD_YAHA_LIKHE@cluster0.ciwzgqg.mongodb.net/?appName=Cluster0"
-
-try:
-    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    db = client['InstaSaaS']
-    users_collection = db['users']
-    print("\n✅ MONGODB CONNECTED!\n")
-except Exception as e:
-    print(f"\n❌ DB ERROR: {e}\n")
-    db = None
-    users_collection = None
-
 # --- HELPER FUNCTIONS ---
 def get_user(username):
-    if users_collection is None: return None
-    return users_collection.find_one({"username": username})
+    data = read_db()
+    return data.get(username)
 
 def is_premium(username):
-    user = get_user(username)
+    data = read_db()
+    user = data.get(username)
     if user and user.get('is_premium'):
-        if user.get('plan_expiry') and user['plan_expiry'] > datetime.datetime.now():
-            return True
-        else:
-            users_collection.update_one({"username": username}, {"$set": {"is_premium": False}})
-            return False
+        expiry_str = user.get('plan_expiry')
+        if expiry_str:
+            try:
+                expiry_date = datetime.datetime.strptime(expiry_str, "%Y-%m-%d %H:%M:%S")
+                if expiry_date > datetime.datetime.now():
+                    return True
+            except:
+                pass
+        
+        # Agar expire ho gaya ya date galat hai
+        user['is_premium'] = False
+        data[username] = user
+        save_db(data)
+        return False
     return False
 
 def make_video_unique(input_path):
@@ -90,31 +109,32 @@ def login():
                 session['is_admin'] = True
                 return redirect(url_for('admin_dashboard'))
 
-            # Check DB Connection first
-            if users_collection is None:
-                return "❌ Database Error: Password check karein ya IP Whitelist karein."
+            data = read_db()
+            user = data.get(username)
 
-            user = get_user(username)
             if user:
-                # Login
+                # Login Logic
                 if user.get('banned'):
-                    msg = "🚫 BANNED."
+                    msg = "🚫 You are BANNED."
                 elif check_password_hash(user['password'], password):
                     session['username'] = username
                     return redirect(url_for('dashboard'))
                 else:
                     msg = "❌ Wrong Password"
             else:
-                # Register
+                # Auto-Register Logic
                 hashed_pw = generate_password_hash(password)
-                users_collection.insert_one({
+                new_user = {
                     "username": username,
                     "password": hashed_pw,
                     "joined": datetime.datetime.now().strftime("%Y-%m-%d"),
                     "is_premium": False,
                     "plan_expiry": None,
                     "banned": False
-                })
+                }
+                data[username] = new_user
+                save_db(data) # Cloud me save ho gaya
+                
                 session['username'] = username
                 return redirect(url_for('dashboard'))
 
@@ -128,6 +148,9 @@ def dashboard():
     if 'username' not in session: return redirect(url_for('login'))
     username = session['username']
     user = get_user(username)
+    if not user:
+        session.clear()
+        return redirect(url_for('login'))
     return render_template('dashboard.html', user=user, username=username)
 
 @app.route('/buy-premium')
@@ -135,6 +158,7 @@ def buy_premium():
     return render_template('buy_premium.html')
 
 # --- TOOLS ---
+
 @app.route('/tool/poster', methods=['GET', 'POST'])
 def tool_poster():
     if 'username' not in session: return redirect(url_for('login'))
@@ -165,7 +189,8 @@ def tool_reposter():
         msg = "✅ Video Stolen & Uploaded!"
     return render_template('tool_reposter.html', msg=msg)
 
-# --- ADMIN ---
+# --- ADMIN PANEL ---
+
 @app.route('/admin')
 def admin_link():
     return redirect(url_for('login'))
@@ -173,19 +198,25 @@ def admin_link():
 @app.route('/admin/dashboard')
 def admin_dashboard():
     if not session.get('is_admin'): return redirect(url_for('login'))
-    all_users = list(users_collection.find())
+    data = read_db()
+    all_users = list(data.values())
     return render_template('admin_dashboard.html', users=all_users)
 
 @app.route('/admin/action/<action>/<username>')
 def admin_action(action, username):
     if not session.get('is_admin'): return redirect(url_for('login'))
-    if action == 'premium':
-        expiry = datetime.datetime.now() + datetime.timedelta(days=30)
-        users_collection.update_one({"username": username}, {"$set": {"is_premium": True, "plan_expiry": expiry}})
-    elif action == 'ban':
-        curr = get_user(username)
-        new_status = not curr.get('banned', False)
-        users_collection.update_one({"username": username}, {"$set": {"banned": new_status}})
+    
+    data = read_db()
+    if username in data:
+        if action == 'premium':
+            expiry = datetime.datetime.now() + datetime.timedelta(days=30)
+            data[username]['is_premium'] = True
+            data[username]['plan_expiry'] = expiry.strftime("%Y-%m-%d %H:%M:%S")
+        elif action == 'ban':
+            data[username]['banned'] = not data[username]['banned']
+        
+        save_db(data)
+            
     return redirect(url_for('admin_dashboard'))
 
 @app.route('/logout')
