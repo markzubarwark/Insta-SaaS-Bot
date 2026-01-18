@@ -4,7 +4,4 @@ schedule
 moviepy
 gunicorn
 requests
-pymongo
-dnspython
 werkzeug
-
